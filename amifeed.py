@@ -51,6 +51,19 @@ def amibroker_folder():
     return None
 
 
+def amibroker_running():
+    """is Broker.exe running? (never starts AmiBroker)"""
+    if os.name != "nt":
+        return False
+    try:
+        import subprocess
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq Broker.exe", "/NH"], capture_output=True, text=True,
+                             timeout=10, creationflags=0x08000000).stdout
+        return "broker.exe" in out.lower()
+    except Exception:
+        return False
+
+
 def install_format(data_dir):
     """write kite2ami.format next to the data and try to copy it into AmiBroker\\Formats"""
     mine = os.path.join(data_dir, FORMAT_NAME)
@@ -86,6 +99,7 @@ class Feeder:
         self.log = log
         self.q = queue.Queue()
         self.ab = None
+        self._tried = 0.0
         self.state = dict(attached=False, version="", database="", imports=0, last_import=None, error="",
                           com=HAVE_COM, waiting=0)
         self.th = threading.Thread(target=self._run, daemon=True, name="amibroker")
@@ -102,16 +116,33 @@ class Feeder:
                 return self.ab
             except Exception:
                 self.ab = None
+        err = ""
         try:
             self.ab = win32com.client.GetActiveObject("Broker.Application")
-            self.state.update(attached=True, version=str(self.ab.Version), database=str(self.ab.DatabasePath or ""),
-                              error="")
-            self.log(f"Attached to AmiBroker {self.state['version']} — database {self.state['database']}")
-            return self.ab
-        except Exception:
-            self.ab = None
-            self.state.update(attached=False, error="AmiBroker is not open — bars will go in when it is.")
-            return None
+        except Exception as e:                    # not in Windows' list of running programs (common) …
+            self.ab, err = None, str(e)
+            if amibroker_running():               # … but AmiBroker is open: connect the normal way (same window)
+                try:
+                    self.ab = win32com.client.Dispatch("Broker.Application")
+                except Exception as e2:            # noqa: BLE001
+                    err = str(e2)
+        if self.ab is not None:
+            try:
+                self.state.update(attached=True, version=str(self.ab.Version),
+                                  database=str(self.ab.DatabasePath or ""), error="")
+                self.log(f"Attached to AmiBroker {self.state['version']} — database {self.state['database']}")
+                return self.ab
+            except Exception as e:                # noqa: BLE001
+                self.ab, err = None, str(e)
+        if amibroker_running():
+            msg = ("AmiBroker is open but did not answer. If either AmiBroker or the bridge was started with "
+                   "'Run as administrator', start both the same way (normally). Details: " + err[:160])
+        else:
+            msg = "AmiBroker is not open — bars will go in when it is."
+        if msg != self.state.get("error"):
+            self.log(msg)
+        self.state.update(attached=False, error=msg)
+        return None
 
     def _run(self):
         if HAVE_COM:
@@ -134,6 +165,9 @@ class Feeder:
                 self._attach()
             self.state["waiting"] = len(pending)
             if not pending:
+                if time.time() - self._tried > 10:      # keep the status card honest while idle
+                    self._tried = time.time()
+                    self._attach()
                 continue
             ab = self._attach()
             if ab is None:
