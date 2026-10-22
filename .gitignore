@@ -1,0 +1,10 @@
+# your data and Zerodha login stay on your PC
+data/
+data_location.txt
+settings.json
+*.db
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

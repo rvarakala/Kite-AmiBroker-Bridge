@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn>=0.27
+requests>=2.31
+websocket-client>=1.7
+pywin32>=306; sys_platform == "win32"

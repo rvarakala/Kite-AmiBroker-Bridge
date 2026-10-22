@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kite → AmiBroker Bridge</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--ink:#1d2330;--mute:#6a7385;--line:#e2e5eb;--acc:#2f6fed;--ok:#1f9d55;--warn:#c27c0e;--bad:#d64545;--field:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b2029;--ink:#e6e9ef;--mute:#8e97a8;--line:#2b3240;--acc:#5b8cff;--ok:#3cc177;--warn:#e0a43a;--bad:#ef6b6b;--field:#141820}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:18px 16px 6px;max-width:1100px;margin:auto;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{font-size:20px;margin:0}
+.sub{color:var(--mute);font-size:13px}
+main{max-width:1100px;margin:auto;padding:8px 16px 40px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 8px;font-weight:600}
+.big{font-size:17px;font-weight:600;display:flex;align-items:center;gap:8px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mute);flex:none}
+.dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
+.small{color:var(--mute);font-size:12.5px;margin-top:4px;word-break:break-word}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:7px 12px;cursor:pointer}
+button.pri{background:var(--acc);border-color:var(--acc);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+label{display:block;font-size:12.5px;color:var(--mute);margin:10px 0 4px}
+input,textarea,select{font:inherit;width:100%;background:var(--field);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+textarea{min-height:190px;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+.inline{display:flex;gap:8px;align-items:center}
+.inline input[type=checkbox]{width:auto}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{border:0;border-radius:0}
+.seg button.on{background:var(--acc);color:#fff}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--acc);width:0}
+pre{margin:0;max-height:260px;overflow:auto;font:12.5px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;color:var(--mute)}
+.hint{font-size:12.5px;color:var(--mute);margin-top:6px}
+code{background:var(--bg);padding:1px 5px;border-radius:4px}
+.msg{min-height:18px;font-size:13px}
+.msg.err{color:var(--bad)}.msg.ok{color:var(--ok)}
+</style>
+</head>
+<body>
+<header><h1>Kite → AmiBroker Bridge</h1><span class="sub" id="now"></span></header>
+<main>
+  <div class="grid">
+    <div class="card"><h2>Zerodha login</h2><div class="big"><span class="dot" id="d-login"></span><span id="t-login">…</span></div><div class="small" id="s-login"></div></div>
+    <div class="card"><h2>Live feed</h2><div class="big"><span class="dot" id="d-live"></span><span id="t-live">…</span></div><div class="small" id="s-live"></div></div>
+    <div class="card"><h2>AmiBroker</h2><div class="big"><span class="dot" id="d-ab"></span><span id="t-ab">…</span></div><div class="small" id="s-ab"></div></div>
+    <div class="card"><h2>History</h2><div class="big"><span class="dot" id="d-bf"></span><span id="t-bf">…</span></div><div class="bar"><i id="p-bf"></i></div><div class="small" id="s-bf"></div></div>
+  </div>
+
+  <div class="row">
+    <button class="pri" id="b-start">Start</button>
+    <button id="b-stop">Stop</button>
+    <button id="b-bf">Fetch missing history</button>
+    <button id="b-full">Re-send all history</button>
+    <button id="b-test">Check AmiBroker</button>
+    <span class="msg" id="msg"></span>
+  </div>
+
+  <div class="two">
+    <div class="card">
+      <h2>Symbols</h2>
+      <textarea id="symbols" spellcheck="false"></textarea>
+      <div class="hint">One per line, Zerodha's name. To use another name in AmiBroker: <code>NIFTY 50 = NIFTY</code>. Up to ~200 is comfortable. <b id="symcount"></b></div>
+      <div class="row" id="lists"></div>
+    </div>
+    <div class="card">
+      <h2>Settings</h2>
+      <label>Zerodha login</label>
+      <div class="seg" id="mode"><button data-m="shared">Use NSE EOD Fetcher's login</button><button data-m="own">My own Kite app</button></div>
+      <div id="m-shared">
+        <label>NSE EOD Fetcher database (nse_eod.db)</label>
+        <input id="nse_db" placeholder="found automatically">
+        <div class="hint">Log in to Zerodha in NSE EOD Fetcher each morning as usual — the bridge picks up that login by itself. No second login.</div>
+      </div>
+      <div id="m-own" hidden>
+        <label>Kite API key</label><input id="api_key" autocomplete="off">
+        <label>Kite API secret (kept only on this PC)</label><input id="secret" type="password" autocomplete="off">
+        <div class="hint">In your Kite Connect app set the redirect URL to <code>http://127.0.0.1:8770/callback</code>.</div>
+        <div class="row"><button id="b-login">Log in to Zerodha</button></div>
+      </div>
+      <div class="two" style="gap:10px">
+        <div><label>Send to AmiBroker every (seconds)</label><input id="push_secs" type="number" min="1" max="60"></div>
+        <div><label>History to fetch (days)</label><input id="backfill_days" type="number" min="1" max="3650"></div>
+      </div>
+      <label class="inline"><input type="checkbox" id="auto_backfill"> Fetch missing history before going live</label>
+      <label class="inline"><input type="checkbox" id="eod_repair"> At 3:40 PM replace today's bars with Zerodha's official minute candles</label>
+      <div class="row"><button class="pri" id="b-save">Save settings</button></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px"><h2>Activity</h2><pre id="log"></pre></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let mode = 'shared';
+function msg(t, cls){ $('msg').textContent = t || ''; $('msg').className = 'msg ' + (cls || ''); }
+async function call(url, opt){
+  const r = await fetch(url, opt);
+  let j = null; try { j = await r.json(); } catch(e){}
+  if (!r.ok) throw new Error((j && j.detail) || ('HTTP ' + r.status));
+  return j;
+}
+function setMode(m){
+  mode = m;
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.m === m));
+  $('m-shared').hidden = m !== 'shared'; $('m-own').hidden = m !== 'own';
+}
+document.querySelectorAll('#mode button').forEach(b => b.onclick = () => setMode(b.dataset.m));
+function countSyms(){
+  const n = $('symbols').value.split(/[\n,]/).map(s => s.split('#')[0].trim()).filter(Boolean).length;
+  $('symcount').textContent = n + ' symbols';
+}
+$('symbols').oninput = countSyms;
+
+async function loadSettings(){
+  const s = await call('/api/settings');
+  setMode(s.login_mode);
+  for (const k of ['nse_db','api_key','secret','symbols','push_secs','backfill_days']) $(k).value = s[k] ?? '';
+  $('nse_db').placeholder = s.nse_db_found ? 'found: ' + s.nse_db_found : 'not found — paste the path to nse_eod.db';
+  $('auto_backfill').checked = !!s.auto_backfill; $('eod_repair').checked = !!s.eod_repair;
+  countSyms();
+  try {
+    const ls = await call('/api/nse-lists');
+    $('lists').innerHTML = '<span class="small">Add from NSE EOD Fetcher:</span>';
+    ls.forEach(l => {
+      const b = document.createElement('button');
+      b.textContent = `${l.name} (${l.symbols.length})`; b.disabled = !l.symbols.length;
+      b.onclick = () => {
+        const have = new Set($('symbols').value.split('\n').map(x => x.split('=')[0].split('#')[0].trim().toUpperCase()));
+        const add = l.symbols.filter(s => !have.has(s.toUpperCase()));
+        $('symbols').value = ($('symbols').value.replace(/\s+$/,'') + '\n' + add.join('\n')).trim();
+        countSyms(); msg(`${add.length} added — press Save settings.`, 'ok');
+      };
+      $('lists').appendChild(b);
+    });
+  } catch(e){ $('lists').innerHTML = ''; }
+}
+$('b-save').onclick = async () => {
+  try {
+    const body = {login_mode: mode, nse_db: $('nse_db').value, api_key: $('api_key').value, secret: $('secret').value,
+      symbols: $('symbols').value, push_secs: +$('push_secs').value || 5, backfill_days: +$('backfill_days').value || 30,
+      auto_backfill: $('auto_backfill').checked, eod_repair: $('eod_repair').checked};
+    const r = await call('/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    msg(`Saved — ${r.symbols} symbols.`, 'ok'); loadSettings();
+  } catch(e){ msg(e.message, 'err'); }
+};
+$('b-login').onclick = async () => { await $('b-save').onclick(); location.href = '/api/login'; };
+$('b-start').onclick = async () => { try { await call('/api/start', {method:'POST'}); msg('Starting…', 'ok'); } catch(e){ msg(e.message, 'err'); } };
+$('b-stop').onclick = async () => { await call('/api/stop', {method:'POST'}); msg('Stopped.'); };
+$('b-bf').onclick = async () => { try { await call('/api/backfill?days=' + (+$('backfill_days').value || 30), {method:'POST'}); msg('Fetching history…', 'ok'); } catch(e){ msg(e.message, 'err'); } };
+$('b-full').onclick = async () => {
+  if (!confirmFull()) return;
+  try { await call('/api/backfill?full=true&days=' + (+$('backfill_days').value || 30), {method:'POST'}); msg('Re-sending all history…', 'ok'); } catch(e){ msg(e.message, 'err'); }
+};
+function confirmFull(){
+  const b = $('b-full');
+  if (b.dataset.armed) { delete b.dataset.armed; b.textContent = 'Re-send all history'; return true; }
+  b.dataset.armed = 1; b.textContent = 'Click again to re-send';
+  setTimeout(() => { delete b.dataset.armed; b.textContent = 'Re-send all history'; }, 4000);
+  return false;
+}
+$('b-test').onclick = async () => {
+  msg('Looking for AmiBroker…');
+  const s = await call('/api/test', {method:'POST'});
+  msg(s.attached ? `AmiBroker ${s.version} found — database ${s.database}` : (s.error || 'AmiBroker not found'), s.attached ? 'ok' : 'err');
+};
+
+function dot(id, cls){ $(id).className = 'dot ' + (cls || ''); }
+async function poll(){
+  try {
+    const s = await call('/api/status');
+    $('now').textContent = s.now + ' IST · data in ' + s.data_dir;
+    dot('d-login', s.login.ok ? 'ok' : 'warn');
+    $('t-login').textContent = s.login.ok ? 'Logged in' + (s.login.user ? ' · ' + s.login.user : '') : 'Not logged in';
+    $('s-login').textContent = s.login.ok ? (s.login.mode === 'shared' ? 'Shared with NSE EOD Fetcher' : 'Own Kite app') + (s.login.expires ? ' · valid till ' + s.login.expires.slice(11,16) + ' tomorrow' : '') : s.login.message;
+    const L = s.live;
+    dot('d-live', L.connected ? 'ok' : (s.running ? 'warn' : ''));
+    $('t-live').textContent = L.connected ? `Streaming ${s.symbols} symbols` : (s.running ? 'Connecting…' : 'Stopped');
+    $('s-live').textContent = (L.connected ? `${L.ticks.toLocaleString()} ticks · last ${L.last_tick || '—'} · ${s.bars_today.toLocaleString()} bars today` : (L.error || '')) +
+      (s.unknown.length ? ' · not found: ' + s.unknown.join(', ') : '');
+    const A = s.amibroker;
+    dot('d-ab', A.attached ? 'ok' : (A.com ? 'warn' : 'bad'));
+    $('t-ab').textContent = A.attached ? 'Connected' + (A.version ? ' · ' + A.version : '') : 'Not connected';
+    $('s-ab').textContent = A.attached ? `${A.imports.toLocaleString()} imports · last ${A.last_import || '—'}` + (A.waiting ? ` · ${A.waiting} waiting` : '') + (A.database ? ' · ' + A.database : '')
+                                       : (A.error || 'Open AmiBroker with a 1-minute database.') + (A.waiting ? ` (${A.waiting} file waiting)` : '');
+    const B = s.backfill;
+    dot('d-bf', B.running ? 'warn' : (B.error ? 'bad' : (B.last ? 'ok' : '')));
+    $('t-bf').textContent = B.running ? `Fetching ${B.symbol || '…'}` : (B.error ? 'Stopped' : (B.last ? 'Up to date' : 'Not fetched yet'));
+    $('p-bf').style.width = (B.total ? Math.round(100 * B.done / B.total) : 0) + '%';
+    $('s-bf').textContent = B.running ? `${B.done} / ${B.total} symbols · ${B.rows.toLocaleString()} bars` : (B.error || (B.last ? `last ${B.last} · ${B.rows.toLocaleString()} bars` : ''));
+    $('b-start').disabled = s.running; $('b-stop').disabled = !s.running;
+    const lg = await call('/api/log');
+    const pre = $('log'), atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+    pre.textContent = lg.join('\n'); if (atEnd) pre.scrollTop = pre.scrollHeight;
+  } catch(e){ $('t-live').textContent = 'Bridge not running'; }
+}
+loadSettings(); poll(); setInterval(poll, 2000);
+</script>
+</body>
+</html>
